@@ -234,7 +234,7 @@ def _raster_elements(img_path, n_cores=3):
         lab = np.argmin(((px[:, None] - cent[None]) ** 2).sum(2), 1)
         cent = np.array([px[lab == k].mean(0) if (lab == k).any() else cent[k] for k in range(n_cores)])
     full = -np.ones(mask.shape, int); full[mask] = lab
-    els = []
+    els = []; avisos_r = []
     H = mask.shape[0]
     for k in range(n_cores):
         m = np.pad(full == k, 1)
@@ -247,9 +247,12 @@ def _raster_elements(img_path, n_cores=3):
         if g is None: continue
         g = g.simplify(0.6).buffer(0)
         cor = '#%02x%02x%02x' % tuple(int(x) for x in cent[k])
+        pequenos = 0
         for p in parts(g):
             if p.area > 30: els.append({'geom': p, 'cor': cor})
-    return els, ['Logo em bitmap: vetorizado automaticamente. Cantos e curvas podem perder fidelidade – prefira SVG/PDF vetorial.']
+            elif p.area > 2: pequenos += 1
+        if pequenos and any(e['cor'] == cor for e in els): avisos_r.append(f'{pequenos} detalhe(s) muito pequeno(s) na cor {cor} foram descartados (pingos de i, acentos?). Confira no mapa.')
+    return els, avisos_r + ['Logo em bitmap: vetorizado automaticamente. Cantos e curvas podem perder fidelidade – prefira SVG/PDF vetorial.']
 
 def cmd_logo(a):
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
@@ -325,7 +328,8 @@ def _backing(g, borda, fechar):
     for r in [fechar, fechar * 1.5, fechar * 2, fechar * 3]:
         b = g.buffer(r, join_style=1).buffer(-r + borda, join_style=1).union(g.buffer(borda))
         b = unary_union([Polygon(p.exterior) for p in parts(b)])
-        if len(parts(b)) == 1: return b, r
+        # peça única E sem "cintura" fina (ligação < ~2 mm quebra ao moldar)
+        if len(parts(b)) == 1 and len([p for p in parts(b.buffer(-1.0)) if p.area > 1]) == 1: return b, r
     return b, r
 
 def _extrude(g, h, z):
@@ -478,7 +482,8 @@ def _mockup(spec, P, out, built, R, cb):
     else:
         cyl = trimesh.creation.cylinder(radius=R, height=95, sections=128); cyl.apply_translation([0, 0, 47.5])
         V, F = cyl.vertices, cyl.faces; Hc = 95
-    items = [(V, F, np.array([0.93, 0.93, 0.93]))]
+    cor_corpo = mk.get('cor_corpo', spec.get('cor_caneca', '#eeeeee'))
+    items = [(V, F, np.array(matplotlib.colors.to_rgb(cor_corpo)))]
     def wrap(geom, ang, hc, z0, t, col):
         m = _extrude(geom, t, z0); v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, max_edge=1.5)
         th = np.radians(ang) + v[:, 0] / R; r = R + 0.4 + v[:, 2]
