@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: padaria-svg-multicor
+expected_outcome: |
+  Gera zip com STLs separados por cor (contorno + marrom + laranja para o ícone; contorno + marrom para o nome), ícone x2 com tamanho próximo do escudo 54x50 mm, nome na frente com largura entre 50 e 65 mm, PADARIA ARTESANAL fora das peças, mockup e prévia, e explica decisões e riscos em português.
+context:
+  scaffold_script: place-files.sh

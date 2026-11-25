@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: academia-png-so-frente
+expected_outcome: |
+  Vetoriza o PNG avisando da perda de fidelidade, gera uma única peça de frente (halter + FORÇA) em vermelho com contorno claro (branco) por contraste com a caneca preta, sem a palavra academia, largura até ~65 mm, mockup e prévia, zip e explicação em português.
+context:
+  scaffold_script: place-files.sh
