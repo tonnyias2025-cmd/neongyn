@@ -254,6 +254,17 @@ def _raster_elements(img_path, n_cores=3):
         if pequenos and any(e['cor'] == cor for e in els): avisos_r.append(f'{pequenos} detalhe(s) muito pequeno(s) na cor {cor} foram descartados (pingos de i, acentos?). Confira no mapa.')
     return els, avisos_r + ['Logo em bitmap: vetorizado automaticamente. Cantos e curvas podem perder fidelidade – prefira SVG/PDF vetorial.']
 
+def _fill(ax, poly, color, **kw):
+    """Desenha polígono com furos de verdade (não pinta por cima do que está dentro do furo)."""
+    from matplotlib.path import Path as MPath
+    from matplotlib.patches import PathPatch
+    from shapely.geometry.polygon import orient
+    poly = orient(poly, 1.0)
+    rings = [np.asarray(poly.exterior.coords)] + [np.asarray(i.coords) for i in poly.interiors]
+    verts = np.concatenate(rings); codes = []
+    for r in rings: codes += [MPath.MOVETO] + [MPath.LINETO] * (len(r) - 2) + [MPath.CLOSEPOLY]
+    ax.add_patch(PathPatch(MPath(verts, codes), facecolor=color, **kw))
+
 def cmd_logo(a):
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     os.makedirs(a.saida, exist_ok=True)
@@ -293,12 +304,11 @@ def cmd_logo(a):
     fig, ax = plt.subplots(figsize=(14, 14 * (Y1 - Y0) / (X1 - X0) + 1))
     for e in els:
         for p in parts(e['geom']):
-            x, y = p.exterior.xy; ax.fill(x, y, color=e['cor'] if e['cor'] not in ('#ffffff',) else '#eeeeee', ec='k', lw=0.3)
-            for h in p.interiors: x, y = h.xy; ax.fill(x, y, color='white', lw=0)
+            _fill(ax, p, e['cor'] if e['cor'] not in ('#ffffff',) else '#eeeeee', ec='k', lw=0.3)
         c = e['geom'].representative_point()
         ax.text(c.x, c.y, str(e['id']), fontsize=13, weight='bold', color='white', ha='center', va='center',
                 bbox=dict(boxstyle='round,pad=0.15', fc='#c00000', ec='none', alpha=.85))
-    ax.set_aspect('equal'); ax.axis('off'); ax.set_title('Elementos do logo (número = id para o pedido.json)')
+    ax.autoscale(); ax.set_aspect('equal'); ax.axis('off'); ax.set_title('Elementos do logo (número = id para o pedido.json)')
     plt.tight_layout(); plt.savefig(os.path.join(a.saida, 'logo_mapa.png'), dpi=80); plt.close()
     print(f'{len(els)} elementos. Mapa: {a.saida}/logo_mapa.png')
     for t in tab: print(f"  id {t['id']:>3}  cor {t['cor']}  ilhas {t['ilhas']:>3}  região {t['regiao_norm_x0y0x1y1_topo_esq']}  área {t['area_rel']}")
@@ -356,6 +366,7 @@ def _nome_cor(hexc):
     if h[1] < 0.15: return 'cinza' if 0.15 < h[2] < 0.85 else ('branco' if h[2] >= 0.85 else 'preto')
     nomes = [(15, 'vermelho'), (40, 'laranja'), (70, 'amarelo'), (160, 'verde'), (200, 'ciano'), (260, 'azul'), (300, 'roxo'), (345, 'rosa'), (360, 'vermelho')]
     deg = h[0] * 360
+    if deg <= 45 and h[2] < 0.55: return 'marrom'
     return next(n for lim, n in nomes if deg <= lim)
 
 def cmd_gerar(a):
@@ -433,16 +444,15 @@ def cmd_gerar(a):
     cb = {'preto': '#1a1a1a', 'branco': '#f4f4f4'}.get(cor_base, cor_base if cor_base.startswith('#') else '#1a1a1a')
     for ax, (pc, nome, back, layers) in zip(axs, built):
         for p in parts(back):
-            x, y = p.exterior.xy; ax.fill(x, y, color=cb, ec='#888', lw=0.5)
+            _fill(ax, p, cb, ec='#888', lw=0.5)
         for c, g in layers:
             for p in parts(g):
-                x, y = p.exterior.xy; ax.fill(x, y, color=c, lw=0)
-                for hh in p.interiors: x, y = hh.xy; ax.fill(x, y, color=cb, lw=0)
+                _fill(ax, p, c, lw=0)
             for p in _thin(g, BICO):
                 x, y = p.exterior.xy; ax.plot(x, y, 'r', lw=1.2)
         bx0, by0, bx1, by1 = back.bounds
         ax.set_title(f'{nome}  ×{pc.get("quantidade", 1)}\n{bx1 - bx0:.1f} × {by1 - by0:.1f} mm (vermelho = traço < {BICO} mm)')
-        ax.set_aspect('equal'); ax.grid(alpha=.25)
+        ax.autoscale(); ax.set_aspect('equal'); ax.grid(alpha=.25)
     plt.tight_layout(); plt.savefig(os.path.join(out, 'PREVIEW_pecas.png'), dpi=110); plt.close()
     # mockup
     try:
@@ -506,7 +516,7 @@ def _mockup(spec, P, out, built, R, cb):
             sh = 0.45 + 0.55 * np.clip(n @ Lgt, 0, 1)
             PP.append(T[:, :, [0, 2]]); CC.append(sh[:, None] * col); DD.append(-T[:, :, 1].mean(1))
         PP = np.concatenate(PP); CC = np.clip(np.concatenate(CC), 0, 1); DD = np.concatenate(DD); o = np.argsort(DD)
-        ax.add_collection(PolyCollection(PP[o], facecolors=CC[o], edgecolors='none'))
+        ax.add_collection(PolyCollection(PP[o], facecolors=CC[o], edgecolors=CC[o], linewidths=0.25))
         ax.set_xlim(-80, 80); ax.set_ylim(-5, Hc + 10); ax.set_aspect('equal'); ax.axis('off'); ax.set_title(t)
     plt.suptitle('Mockup aproximado das peças na caneca', y=0.98)
     plt.tight_layout(); plt.savefig(os.path.join(out, 'MOCKUP_caneca.png'), dpi=100); plt.close()

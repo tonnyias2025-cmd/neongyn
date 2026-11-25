@@ -74,6 +74,8 @@ Campos úteis:
 - `arte_cor_unica: true` junta todas as cores da arte numa só; sem isso, cada cor do logo vira um STL próprio.
 - Opcionais globais: `borda` (1,2 mm), `espessura_base`/`espessura_arte` (1,0/1,0 mm), `bico` (0,4), `vao_min` (0,5), `raio_caneca` (49), `fechar` (3,0).
 - Sem `mockup.modelo_3mf`, o mockup usa um cilindro genérico do mesmo raio.
+- `mockup.cor_corpo` (ex.: `"#1c1c1c"` para caneca preta): cor do corpo no mockup – sem isso fica branco e um contorno branco some.
+- Se o contorno ficar com ligação fina entre partes, o script já aumenta o fechamento sozinho; para forçar, use `fechar` maior (5–6).
 
 Por que esses padrões: 1+1 mm é a mesma espessura dos emblemas Print4You (molda com soprador igual);
 borda de 1,2 mm cria o "selo" que destaca o logo e une as partes soltas numa peça só;
