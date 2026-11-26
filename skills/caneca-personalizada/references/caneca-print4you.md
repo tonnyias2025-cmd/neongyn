@@ -15,6 +15,9 @@ parecer diferente.
 | 6 | plaquinha | 45 × 21,8 × 0,9 | "PEIXE" (0,4 + 0,4 mm) |
 | 7 | corpo inferior com letras juntas | — | opção de imprimir as letras junto |
 
+Partes negativas: obj 3 (base) parte 2 = rebaixo do aro (manter); obj 6 parte 5 = texto "SANTOS FUTEBOL CLUBE" recortado no anel (remover para anel liso).
+Filamentos no modelo: base = filamento 2; corpos = filamento 1.
+
 Alça em +Y no arquivo. Frente da caneca = lado oposto à alça (-Y). Laterais = ±X.
 
 ## Medidas do corpo

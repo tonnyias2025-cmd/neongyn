@@ -557,10 +557,14 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
         bw = max(p[0] for p in pa) - min(p[0] for p in pa); bd = max(p[1] for p in pa) - min(p[1] for p in pa)
     else:
         bw = bd = 256.0
-    nplates = len(malhas); v = math.sqrt(nplates); cols = int(round(v)) + (1 if v > round(v) else 0)
+    cn = spec.get('caneca')
+    base = _caneca_base(P(cn['modelo_3mf']), cn) if cn else None
+    n0 = base['nplacas'] if base else 0
+    nplates = n0 + len(malhas); cols = _cols(nplates)
     model_files = {}; root_objs = []; build = []; ms_objs = []; plates = []
-    oid = 1; ident = 1000
-    for pi, (nome, qtd, partes) in enumerate(malhas):
+    oid = (base['max_id'] + 1) if base else 1; ident = 5000
+    for pi0, (nome, qtd, partes) in enumerate(malhas):
+        pi = n0 + pi0
         col, row = pi % cols, pi // cols
         ox, oy = col * bw * 1.2, -row * bd * 1.2
         allv = np.vstack([m.vertices for _, m, _ in partes]); x0, y0 = allv[:, :2].min(0); x1, y1 = allv[:, :2].max(0)
@@ -575,7 +579,7 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
             fname = f'3D/Objects/object_{oid}.model'
             sub = []; comps = []; ms_parts = []
             for j, (pn, m, c) in enumerate(partes):
-                vid = oid * 100 + j + 1
+                vid = oid * 1000 + j + 1
                 V = m.vertices - [(x0 + x1) / 2, (y0 + y1) / 2, 0]
                 vx = ''.join(f'<vertex x="{a:.5f}" y="{b:.5f}" z="{c2:.5f}"/>' for a, b, c2 in V)
                 tx = ''.join(f'<triangle v1="{a}" v2="{b}" v3="{c2}"/>' for a, b, c2 in m.faces)
@@ -614,6 +618,8 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
                     for i, f in enumerate(model_files)) + '</Relationships>\n')
     ms = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + ''.join(ms_objs) + ''.join(plates) + '\n</config>\n'
     fn = os.path.join(out, f'PROJETO_{cliente}_caneca.3mf')
+    if base:
+        root, rels, ms = _mesclar_caneca(base, cols, root_objs, build, ms_objs, plates, model_files, cliente)
     with zipfile.ZipFile(fn, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
                    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
@@ -623,16 +629,109 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
                    '<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>\n')
         z.writestr('3D/3dmodel.model', root)
         z.writestr('3D/_rels/3dmodel.model.rels', rels)
+        if base:
+            for f, data in base['arquivos'].items(): z.writestr(f, data)
         for f, txt in model_files.items(): z.writestr(f, txt)
         z.writestr('Metadata/model_settings.config', ms)
         if proj:
             z.writestr('Metadata/project_settings.config', json.dumps(proj, indent=4, ensure_ascii=False))
             for n, b in fil_cfgs.items(): z.writestr(n, b)
+    if base:
+        avisos += base['avisos']
     if not proj: avisos.append('Sem 3MF modelo da Print4You: o projeto saiu sem configurações de impressora/filamento.')
     for a in avisos: print('  AVISO 3MF:', a)
     mapa = {f'filamento {i}': c for c, i in fil_of.items()}
     print(f'  Projeto 3MF: {fn}  ({nplates} placas, filamentos {mapa})')
-    return {'arquivo': os.path.basename(fn), 'placas': nplates, 'filamentos': mapa, 'avisos': avisos}
+    return {'arquivo': os.path.basename(fn), 'placas': nplates, 'filamentos': mapa, 'avisos': avisos,
+            'placas_caneca': base['nomes'] if base else []}
+
+def _cols(n):
+    v = math.sqrt(n); return int(round(v)) + (1 if v > round(v) else 0)
+
+def _caneca_base(path3mf, cn):
+    """Lê o 3MF Print4You e separa as peças da caneca pedidas (ex.: base, corpo inferior, corpo superior),
+    removendo partes indicadas (ex.: texto recortado do anel)."""
+    import re
+    from lxml import etree
+    z = zipfile.ZipFile(path3mf)
+    keep = {str(k): v for k, v in cn['objetos'].items()}
+    remover = {str(k): [str(x) for x in v] for k, v in cn.get('remover_partes', {}).items()}
+    root = etree.fromstring(z.read('3D/3dmodel.model'))
+    res = root.find(NS + 'resources'); bld = root.find(NS + 'build')
+    ms = etree.fromstring(z.read('Metadata/model_settings.config'))
+    # placas antigas: objeto -> índice da placa
+    old_plate = {}
+    for p in ms.findall('plate'):
+        pid = int(p.find("metadata[@key='plater_id']").get('value'))
+        for mi in p.findall('model_instance'):
+            old_plate[mi.find("metadata[@key='object_id']").get('value')] = pid - 1
+    old_cols = _cols(len(ms.findall('plate')))
+    pa = json.loads(z.read('Metadata/project_settings.config'))['printable_area'] if 'Metadata/project_settings.config' in z.namelist() else ['0x0', '256x0', '256x256', '0x256']
+    pa = [tuple(float(v) for v in q.split('x')) for q in pa]
+    bw = max(q[0] for q in pa) - min(q[0] for q in pa); bd = max(q[1] for q in pa) - min(q[1] for q in pa)
+    objs = {o.get('id'): o for o in res.findall(NS + 'object')}
+    usados = {}  # arquivo -> ids de malha usados
+    root_objs = []; builds = []
+    ordem = [k for k in keep]  # ordem das placas novas
+    for k in ordem:
+        o = objs[k]; comps = o.find(NS + 'components')
+        for c in list(comps):
+            if c.get('objectid') in remover.get(k, []): comps.remove(c); continue
+            usados.setdefault(c.get(PN + 'path').lstrip('/'), set()).add(c.get('objectid'))
+        o.set('name', keep[k])
+        root_objs.append(etree.tostring(o).decode())
+        it = next(i for i in bld if i.get('objectid') == k)
+        builds.append((k, it.get('transform'), old_plate.get(k, 0)))
+    # arquivos de malha: mantém só objetos usados
+    arquivos = {}
+    rx_obj = re.compile(rb'<object\b[^>]*\bid="(\d+)"[^>]*>.*?</object>', re.S)
+    for f, ids in usados.items():
+        data = z.read(f)
+        data = rx_obj.sub(lambda m: m.group(0) if m.group(1).decode() in ids else b'', data)
+        arquivos[f] = data
+    # model_settings dos objetos mantidos
+    ms_objs = []
+    for o in ms.findall('object'):
+        k = o.get('id')
+        if k not in keep: continue
+        for p in o.findall('part'):
+            if p.get('id') in remover.get(k, []): o.remove(p)
+        nm = o.find("metadata[@key='name']")
+        if nm is not None: nm.set('value', keep[k])
+        ms_objs.append(etree.tostring(o).decode())
+    ids = [int(o.get('id')) for o in res.findall(NS + 'object')]
+    for f in z.namelist():
+        if f.startswith('3D/Objects/'):
+            ids += [int(x) for x in re.findall(rb'<object\b[^>]*\bid="(\d+)"', z.read(f))]
+    meta = [etree.tostring(m).decode() for m in root.findall(NS + 'metadata') if m.get('name') not in ('Title', 'Thumbnail_Middle', 'Thumbnail_Small', 'DesignerCover', 'ProfileCover')]
+    return {'nplacas': len(ordem), 'root_objs': root_objs, 'builds': builds, 'arquivos': arquivos, 'ms_objs': ms_objs,
+            'max_id': max(ids), 'old_cols': old_cols, 'bw': bw, 'bd': bd, 'meta': meta, 'nomes': [keep[k] for k in ordem],
+            'ordem': ordem, 'avisos': []}
+
+def _mesclar_caneca(base, cols, root_objs, build, ms_objs, plates, model_files, cliente):
+    bw, bd = base['bw'], base['bd']
+    org = lambda i, c: np.array([(i % c) * bw * 1.2, -(i // c) * bd * 1.2])
+    b_items = []; b_plates = []; ident = 4000
+    for newi, (k, tr, oldi) in enumerate(base['builds']):
+        v = [float(x) for x in tr.split()]
+        d = org(newi, cols) - org(oldi, base['old_cols']); v[9] += d[0]; v[10] += d[1]
+        b_items.append(f'<item objectid="{k}" transform="{" ".join(repr(float(x)) for x in v)}" printable="1"/>')
+        ident += 1
+        b_plates.append(f'<plate><metadata key="plater_id" value="{newi + 1}"/><metadata key="plater_name" value="{base["nomes"][newi]}"/>'
+                        f'<metadata key="locked" value="false"/><model_instance><metadata key="object_id" value="{k}"/>'
+                        f'<metadata key="instance_id" value="0"/><metadata key="identify_id" value="{ident}"/></model_instance></plate>')
+    root = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" '
+            'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
+            'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">\n' +
+            ''.join(m for m in base['meta']) + f'<metadata name="Title">{cliente} - caneca completa</metadata>\n'
+            '<resources>' + ''.join(base['root_objs']) + ''.join(root_objs) + '</resources>\n<build>' +
+            ''.join(b_items) + ''.join(build) + '</build>\n</model>\n')
+    allf = list(base['arquivos']) + list(model_files)
+    rels = ('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            ''.join(f'<Relationship Target="/{f}" Id="rel-{i + 1}" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>'
+                    for i, f in enumerate(allf)) + '</Relationships>\n')
+    ms = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + ''.join(base['ms_objs']) + ''.join(ms_objs) + ''.join(b_plates) + ''.join(plates) + '\n</config>\n'
+    return root, rels, ms
 
 POS = {'frente': (0, 0.72), 'lateral_esq': (-90, 0.57), 'lateral_dir': (90, 0.57), 'tras': (180, 0.6)}
 def _mockup(spec, P, out, built, R, cb):
