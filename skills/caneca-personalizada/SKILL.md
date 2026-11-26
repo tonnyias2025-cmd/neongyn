@@ -85,6 +85,10 @@ Campos úteis:
   `pintar` (opcional): separa uma faixa de altura de um objeto da caneca numa parte com outro filamento, sem mudar a
   geometria. Ex. faixa texturizada do anel da base do Santos em amarelo: `"pintar": [{"objeto": "6", "z": [17.3, 24.3], "filamento": 2, "nome": "faixa texturizada do anel"}]`
   (`z` em mm medidos de baixo da peça como ela fica na mesa).
+  `alca_para_tras` (padrão true): gira os corpos com alça para a alça ficar para trás da mesa, alinhada pela simetria da peça.
+  Junto com `costura_escondida` (padrão true: costura "traseira" + costura chanfrada no contorno externo), as emendas
+  ficam numa linha só, atrás da alça. O aro (sem alça) também fica com a emenda atrás: na montagem, gire-o para a emenda
+  coincidir com a alça.
   Não inclua placas que são do time (escudos, textos, versão "letras juntas"). As cores do corpo seguem o filamento
   que cada objeto usa no modelo (Santos: base = filamento 2, corpos = filamento 1) – diga ao Tonny qual cor cada peça vai ter.
 - `mockup.cor_corpo` (ex.: `"#1c1c1c"` para caneca preta): cor do corpo no mockup – sem isso fica branco e um contorno branco some.

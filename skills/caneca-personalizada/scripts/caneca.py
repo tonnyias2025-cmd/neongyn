@@ -566,6 +566,9 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
         avisos.append(f'O projeto modelo tem {n_tpl} filamentos e as peças usam {len(cores)} cores: as cores extras ficaram '
                       f'no filamento {n_tpl}. No Bambu Studio, adicione filamento (+) e troque o filamento dessas partes.')
     fil_of = {c: min(i + 1, n_tpl) for i, c in enumerate(cores)}
+    if proj and spec.get('costura_escondida', True):
+        proj['seam_position'] = 'back'            # emenda atrás (alça virada para trás)
+        proj['seam_slope_type'] = 'external'      # costura chanfrada no contorno externo: marca mais discreta
     if proj:
         fc = list(proj['filament_colour'])
         for c, i in fil_of.items(): fc[i - 1] = c
@@ -723,6 +726,43 @@ def _caneca_base(path3mf, cn):
     for f in z.namelist():
         if f.startswith('3D/Objects/'):
             ids += [int(x) for x in re.findall(rb'<object\b[^>]*\bid="(\d+)"', z.read(f))]
+    # alça para trás (+Y da mesa): com costura 'traseira' a emenda fica escondida atrás da alça, alinhada
+    if cn.get('alca_para_tras', True):
+        for i_obj, (k, tr, oldi) in enumerate(builds):
+            o_el = etree.fromstring(root_objs[i_obj]); TB = _T(tr); W = []
+            for c in o_el.find(NS + 'components'):
+                src = c.get(PN + 'path').lstrip('/')
+                m = re.search(rb'<object\b[^>]*\bid="' + c.get('objectid').encode() + rb'"[^>]*>(.*?)</object>', z.read(src), re.S)
+                if not m: continue
+                Vv = np.array(re.findall(rb'<vertex\s+x="([^"]+)"\s+y="([^"]+)"\s+z="([^"]+)"', m.group(1))[::7], dtype=float)
+                if len(Vv): W.append((np.c_[Vv, np.ones(len(Vv))] @ _T(c.get('transform', '1 0 0 0 1 0 0 0 1 0 0 0')) @ TB)[:, :3])
+            if not W: continue
+            W = np.vstack(W); zc = W[:, 2]
+            base = W[zc < zc.min() + 0.3 * (zc.max() - zc.min())]
+            cx, cy = np.median(base[:, 0]), np.median(base[:, 1])
+            r = np.hypot(W[:, 0] - cx, W[:, 1] - cy); rb_ = np.percentile(r, 60)
+            if (r > rb_ + 12).sum() < 50: continue  # sem alça (ex.: aro)
+            al = W[r >= np.percentile(r, 99.7)]      # ponta mais distante = direção aproximada da alça
+            ang = math.atan2(np.mean(al[:, 1] - cy), np.mean(al[:, 0] - cx))
+            # refina pelo plano de simetria da caneca (alça centrada): menor diferença entre a peça e seu espelho
+            from scipy.spatial import cKDTree
+            Sx = W[np.random.default_rng(0).choice(len(W), min(len(W), 15000), replace=False)][:, :2] - [cx, cy]
+            def assim(a):
+                ca, sa = math.cos(math.pi / 2 - a), math.sin(math.pi / 2 - a)
+                P = Sx @ np.array([[ca, sa], [-sa, ca]]); P[:, 0] -= np.median(P[:, 0])
+                M_ = P * [-1, 1]; return cKDTree(P).query(M_)[0].mean()
+            cand = [ang + math.radians(x) for x in np.arange(-20, 20.5, 1.0)]
+            ang = min(cand, key=assim)
+            ang = min([ang + math.radians(x) for x in np.arange(-1, 1.05, 0.1)], key=assim)
+            d = math.pi / 2 - ang
+            if abs(d) < math.radians(3): continue
+            c_, s_ = math.cos(d), math.sin(d)
+            R = np.eye(4); R[:2, :2] = [[c_, s_], [-s_, c_]]  # rotação no eixo z (convenção de vetor-linha)
+            px, py = (W[:, 0].max() + W[:, 0].min()) / 2, (W[:, 1].max() + W[:, 1].min()) / 2
+            Tn = TB.copy(); Tn[:3, :3] = TB[:3, :3] @ R[:3, :3]
+            t = TB[3, :3] - [px, py, 0]; t = t @ R[:3, :3] + [px, py, 0]; Tn[3, :3] = t
+            vals = list(Tn[:3, :3].reshape(-1)) + list(Tn[3, :3])
+            builds[i_obj] = (k, ' '.join(repr(float(v)) for v in vals), oldi)
     # 'pintar': separa uma faixa de altura de um objeto da caneca numa parte própria com outro filamento
     import uuid, manifold3d as mf
     prox = max(ids) + 1
