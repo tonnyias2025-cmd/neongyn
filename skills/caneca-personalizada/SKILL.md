@@ -72,6 +72,7 @@ Campos úteis:
 - Tamanho: `largura`, `altura` (da arte) ou `caber: [L, A]` (peça inteira, com contorno, cabe na caixa).
 - `posicao`: `frente`, `laterais` (gera mockup nos dois lados), `lateral_esq`, `lateral_dir`, `tras`; `altura_centro` em mm para ajustar no mockup.
 - `arte_cor_unica: true` junta todas as cores da arte numa só; sem isso, cada cor do logo vira um STL próprio.
+- `acabamento`: `nivelado` (padrão – arte embutida no contorno, superfície lisa, igual aos escudos Print4You) ou `relevo` (arte 1 mm acima do contorno). Pode ir por peça ou global.
 - `suavizar` (padrão 0,15 mm): tira dentes e serrilhados do vetor original (comuns em logos vetorizados no Corel) sem deformar a letra. Use 0 para manter o vetor exato; até 0,3 para logos muito serrilhados (arredonda pontas finas).
 - Opcionais globais: `borda` (1,2 mm), `espessura_base`/`espessura_arte` (1,0/1,0 mm), `bico` (0,4), `vao_min` (0,5), `raio_caneca` (49), `fechar` (3,0).
 - Sem `mockup.modelo_3mf`, o mockup usa um cilindro genérico do mesmo raio.
@@ -83,7 +84,7 @@ Campos úteis:
 - `mockup.cor_corpo` (ex.: `"#1c1c1c"` para caneca preta): cor do corpo no mockup – sem isso fica branco e um contorno branco some.
 - Se o contorno ficar com ligação fina entre partes, o script já aumenta o fechamento sozinho; para forçar, use `fechar` maior (5–6).
 
-Por que esses padrões: 1+1 mm é a mesma espessura dos emblemas Print4You (molda com soprador igual);
+Por que esses padrões: 2 mm nivelado (1 mm de base + 1 mm onde a arte encaixa) é igual aos emblemas Print4You (molda com soprador igual);
 borda de 1,2 mm cria o "selo" que destaca o logo e une as partes soltas numa peça só;
 vão mínimo de 0,5 mm evita que o bico 0,4 funda quadradinhos/letras vizinhos.
 

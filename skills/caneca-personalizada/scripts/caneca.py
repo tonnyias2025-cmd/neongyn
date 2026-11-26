@@ -388,14 +388,16 @@ def _backing(g, borda, fechar):
         if len(parts(b)) == 1 and len([p for p in parts(b.buffer(-1.0)) if p.area > 1]) == 1: return b, r
     return b, r
 
-def _extrude(g, h, z):
+def _extrude(g, h, z, como_manifold=False):
     import manifold3d as mf, trimesh
     g = clean_geom(g.simplify(0.01))
     rings = []
     for p in parts(g):
         rings.append(np.array(p.exterior.coords[:-1]))
         rings += [np.array(i.coords[:-1]) for i in p.interiors]
-    M = mf.CrossSection(rings, mf.FillRule.EvenOdd).extrude(h).translate((0, 0, z)).to_mesh()
+    MF = mf.CrossSection(rings, mf.FillRule.EvenOdd).extrude(h).translate((0, 0, z))
+    if como_manifold: return MF
+    M = MF.to_mesh()
     m = trimesh.Trimesh(M.vert_properties[:, :3], M.tri_verts, process=False)
     assert m.is_watertight and m.is_winding_consistent and m.volume > 0, 'malha não estanque'
     return m
@@ -472,7 +474,15 @@ def cmd_gerar(a):
         if ref and (BW > ref[0] * 1.15 or BH > ref[1] * 1.15):
             avisos.append(f'peça {BW:.1f}×{BH:.1f} mm passa >15% da referência {ref[0]}×{ref[1]} mm')
         files = []
-        mb = _extrude(back, BASE_T, 0); fb = f'{nome}_1_BASE_contorno_{cor_base}.stl'; mb.export(os.path.join(out, fb)); files.append(fb)
+        acab = pc.get('acabamento', spec.get('acabamento', 'nivelado'))
+        if acab == 'nivelado':  # arte embutida: contorno com 'janelas' na camada de cima, tudo na mesma altura
+            janela = clean_geom(back.difference(unary_union([g for _, g in layers])))
+            U = (_extrude(back, BASE_T, 0, True) + _extrude(janela, ART_T, BASE_T, True)).to_mesh()
+            mb = trimesh.Trimesh(U.vert_properties[:, :3], U.tri_verts, process=False)
+            assert mb.is_watertight and mb.volume > 0, 'contorno nivelado não estanque'
+        else:
+            mb = _extrude(back, BASE_T, 0)
+        fb = f'{nome}_1_BASE_contorno_{cor_base}.stl'; mb.export(os.path.join(out, fb)); files.append(fb)
         tops = []
         for i, (c, g) in enumerate(layers):
             mt = _extrude(g, ART_T, BASE_T); tops.append(mt)
@@ -480,7 +490,7 @@ def cmd_gerar(a):
         fu = f'{nome}_peca_unica_1cor.stl'; trimesh.util.concatenate([mb] + tops).export(os.path.join(out, fu)); files.append(fu)
         info = {'nome': nome, 'quantidade': pc.get('quantidade', 1), 'posicao': pc.get('posicao', ''),
                 'tamanho_total_mm': [round(BW, 1), round(BH, 1)], 'tamanho_arte_mm': [round(w * s, 1), round(h * s, 1)],
-                'espessura_mm': BASE_T + ART_T, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
+                'espessura_mm': BASE_T + ART_T, 'acabamento': acab, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
                 'flecha_na_caneca_mm': round(flecha, 1)}
         relatorio['pecas'].append(info); built.append((pc, nome, back, layers))
         malhas.append((nome, pc.get('quantidade', 1), [('contorno', mb, None)] + [(f'arte {_nome_cor(c)}', mt, c) for (c, _), mt in zip(layers, tops)]))
@@ -792,7 +802,7 @@ def _leiame(spec, rel, out, cor_base, BT, AT, BICO, VAO):
         L.append(f"- {p['nome']}  x{p['quantidade']}  ({p['posicao']})  peça {p['tamanho_total_mm'][0]} x {p['tamanho_total_mm'][1]} mm,"
                  f" arte {p['tamanho_arte_mm'][0]} x {p['tamanho_arte_mm'][1]} mm")
     if spec.get('observacao_dtf'): L += ['', f"DTF (não impresso em 3D): {spec['observacao_dtf']}"]
-    L += ['', f'ESPESSURA: {BT} mm contorno + {AT} mm arte = {BT + AT} mm.', '',
+    L += ['', f'ESPESSURA: {BT + AT} mm. Acabamento: ' + (rel['pecas'][0].get('acabamento', 'nivelado') if rel['pecas'] else '') + ' (nivelado = arte embutida no contorno, superfície lisa; relevo = arte 1 mm acima do contorno).', '',
           'ARQUIVOS POR PEÇA', f'- *_1_BASE_contorno_{cor_base}.stl -> filamento do contorno',
           '- *_2_ARTE_<cor>.stl (e _3_, _4_ se houver mais cores) -> filamento de cada cor da arte',
           '- *_peca_unica_1cor.stl -> mesma peça em um corpo só (1 cor / pintura)', '',
