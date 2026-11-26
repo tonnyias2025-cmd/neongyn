@@ -328,10 +328,29 @@ def _select(els, sel, bbox):
     return out
 
 def _widen_gaps(g, mingap):
+    """Alarga só vãos estreitos ENTRE partes diferentes (ex.: letras vizinhas). Cantos internos da mesma letra ficam intactos."""
     _, _, _, unary_union, _ = _shp()
+    ilhas = parts(g)
     narrow = g.buffer(mingap / 2, join_style=1).buffer(-mingap / 2, join_style=1).difference(g)
-    narrow = unary_union([p for p in parts(narrow) if p.area > 0.02])
-    return clean_geom(g.difference(narrow.buffer(0.15)))
+    vaos = []
+    for p in parts(narrow):
+        if p.area <= 0.02: continue
+        pb = p.buffer(0.02)
+        if sum(1 for il in ilhas if il.intersects(pb)) >= 2: vaos.append(p)
+    if not vaos: return g
+    return clean_geom(g.difference(unary_union(vaos).buffer(0.15)))
+
+def _suavizar(g, r):
+    """Remove dentes/serrilhados do vetor menores que ~2r, ilha por ilha (não junta partes separadas)."""
+    if r <= 0: return g
+    _, _, _, unary_union, _ = _shp()
+    out = []
+    for p in parts(g):
+        q = p.buffer(r, join_style=1).buffer(-r, join_style=1)      # fecha entalhes pequenos
+        q = q.buffer(-r, join_style=1).buffer(r, join_style=1)      # tira pontas/rebarbas pequenas
+        q = q.intersection(p.buffer(r))                              # não cresce além do original
+        if not q.is_empty: out.append(q)
+    return clean_geom(unary_union(out))
 
 def _backing(g, borda, fechar):
     Polygon, _, _, unary_union, _ = _shp()
@@ -408,7 +427,8 @@ def cmd_gerar(a):
         elif 'caber' in pc: s = min((pc['caber'][0] - 2 * BORDA) / w, (pc['caber'][1] - 2 * BORDA) / h)
         else: sys.exit(f'Peça {nome}: informe largura, altura ou caber.')
         tf = lambda g: affinity.translate(affinity.scale(g, s, s, origin=(0, 0)), -(x0 + x1) / 2 * s, -(y0 + y1) / 2 * s)
-        layers = [(c, clean_geom(tf(g))) for c, g in layers]
+        SUAV = pc.get('suavizar', spec.get('suavizar', 0.15))
+        layers = [(c, _suavizar(clean_geom(tf(g)), SUAV)) for c, g in layers]
         art = clean_geom(unary_union([g for _, g in layers]))
         art_w = _widen_gaps(art, VAO)
         layers = [(c, clean_geom(g.intersection(art_w))) for c, g in layers]
