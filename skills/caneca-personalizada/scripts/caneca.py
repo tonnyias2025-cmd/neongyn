@@ -487,7 +487,13 @@ def cmd_gerar(a):
         for i, (c, g) in enumerate(layers):
             mt = _extrude(g, ART_T, BASE_T); tops.append(mt)
             ft = f'{nome}_{i + 2}_ARTE_{_nome_cor(c)}.stl'; mt.export(os.path.join(out, ft)); files.append(ft)
-        fu = f'{nome}_peca_unica_1cor.stl'; trimesh.util.concatenate([mb] + tops).export(os.path.join(out, fu)); files.append(fu)
+        if acab == 'nivelado':
+            mu = _extrude(back, BASE_T + ART_T, 0)
+        else:
+            U = _extrude(back, BASE_T, 0, True)
+            for c, g in layers: U = U + _extrude(g, ART_T, BASE_T, True)
+            U = U.to_mesh(); mu = trimesh.Trimesh(U.vert_properties[:, :3], U.tri_verts, process=False)
+        fu = f'{nome}_peca_unica_1cor.stl'; mu.export(os.path.join(out, fu)); files.append(fu)
         info = {'nome': nome, 'quantidade': pc.get('quantidade', 1), 'posicao': pc.get('posicao', ''),
                 'tamanho_total_mm': [round(BW, 1), round(BH, 1)], 'tamanho_arte_mm': [round(w * s, 1), round(h * s, 1)],
                 'espessura_mm': BASE_T + ART_T, 'acabamento': acab, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
