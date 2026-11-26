@@ -12,7 +12,7 @@ parecer diferente.
 | 3 | corpo pontilhado | 99,4 × 135,6 × 91,5 | parte de cima, **impressa de cabeça para baixo** (z=0 é a borda de cima da caneca) |
 | 4 | 2 emblemas | 54 × 50 × 2 | escudo das laterais: 1 mm base (branco) + 1 mm detalhes (azul) |
 | 5 | texto do anel | faixa ~200 mm × 4 | letras "SANTOS FUTEBOL CLUBE" |
-| 6 | plaquinha | 45 × 21,8 × 0,9 | "PEIXE" (0,4 + 0,4 mm) |
+| 6 | plaquinha | 45 × 21,8 × 0,87 | "PEIXE" (0,435 + 0,435 mm no arquivo = 2 + 2 camadas de 0,2 → imprime 0,8 mm) |
 | 7 | corpo inferior com letras juntas | — | opção de imprimir as letras junto |
 
 Partes negativas: obj 3 (base) parte 2 = rebaixo do aro (manter); obj 6 parte 5 = texto "SANTOS FUTEBOL CLUBE" recortado no anel (remover para anel liso).

@@ -474,29 +474,32 @@ def cmd_gerar(a):
         if ref and (BW > ref[0] * 1.15 or BH > ref[1] * 1.15):
             avisos.append(f'peça {BW:.1f}×{BH:.1f} mm passa >15% da referência {ref[0]}×{ref[1]} mm')
         files = []
+        bt = pc.get('espessura_base', BASE_T); at = pc.get('espessura_arte', ART_T)
+        for e_ in (bt, at):
+            if abs(e_ / 0.2 - round(e_ / 0.2)) > 1e-6: avisos.append(f'espessura {e_} mm não é múltiplo de 0,2 mm (altura de camada): o fatiador vai arredondar')
         acab = pc.get('acabamento', spec.get('acabamento', 'nivelado'))
         if acab == 'nivelado':  # arte embutida: contorno com 'janelas' na camada de cima, tudo na mesma altura
             janela = clean_geom(back.difference(unary_union([g for _, g in layers])))
-            U = (_extrude(back, BASE_T, 0, True) + _extrude(janela, ART_T, BASE_T, True)).to_mesh()
+            U = (_extrude(back, bt, 0, True) + _extrude(janela, at, bt, True)).to_mesh()
             mb = trimesh.Trimesh(U.vert_properties[:, :3], U.tri_verts, process=False)
             assert mb.is_watertight and mb.volume > 0, 'contorno nivelado não estanque'
         else:
-            mb = _extrude(back, BASE_T, 0)
+            mb = _extrude(back, bt, 0)
         fb = f'{nome}_1_BASE_contorno_{cor_base}.stl'; mb.export(os.path.join(out, fb)); files.append(fb)
         tops = []
         for i, (c, g) in enumerate(layers):
-            mt = _extrude(g, ART_T, BASE_T); tops.append(mt)
+            mt = _extrude(g, at, bt); tops.append(mt)
             ft = f'{nome}_{i + 2}_ARTE_{_nome_cor(c)}.stl'; mt.export(os.path.join(out, ft)); files.append(ft)
         if acab == 'nivelado':
-            mu = _extrude(back, BASE_T + ART_T, 0)
+            mu = _extrude(back, bt + at, 0)
         else:
-            U = _extrude(back, BASE_T, 0, True)
-            for c, g in layers: U = U + _extrude(g, ART_T, BASE_T, True)
+            U = _extrude(back, bt, 0, True)
+            for c, g in layers: U = U + _extrude(g, at, bt, True)
             U = U.to_mesh(); mu = trimesh.Trimesh(U.vert_properties[:, :3], U.tri_verts, process=False)
         fu = f'{nome}_peca_unica_1cor.stl'; mu.export(os.path.join(out, fu)); files.append(fu)
         info = {'nome': nome, 'quantidade': pc.get('quantidade', 1), 'posicao': pc.get('posicao', ''),
                 'tamanho_total_mm': [round(BW, 1), round(BH, 1)], 'tamanho_arte_mm': [round(w * s, 1), round(h * s, 1)],
-                'espessura_mm': BASE_T + ART_T, 'acabamento': acab, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
+                'espessura_mm': round(bt + at, 2), 'espessura_camadas_mm': [bt, at], 'acabamento': acab, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
                 'flecha_na_caneca_mm': round(flecha, 1)}
         relatorio['pecas'].append(info); built.append((pc, nome, back, layers))
         malhas.append((nome, pc.get('quantidade', 1), [('contorno', mb, None)] + [(f'arte {_nome_cor(c)}', mt, c) for (c, _), mt in zip(layers, tops)]))
@@ -862,9 +865,9 @@ def _leiame(spec, rel, out, cor_base, BT, AT, BICO, VAO):
     L = [f"PEÇAS {rel['cliente']} – CANECA PERSONALIZADA", '']
     for p in rel['pecas']:
         L.append(f"- {p['nome']}  x{p['quantidade']}  ({p['posicao']})  peça {p['tamanho_total_mm'][0]} x {p['tamanho_total_mm'][1]} mm,"
-                 f" arte {p['tamanho_arte_mm'][0]} x {p['tamanho_arte_mm'][1]} mm")
+                 f" arte {p['tamanho_arte_mm'][0]} x {p['tamanho_arte_mm'][1]} mm, espessura {p['espessura_mm']} mm ({p['espessura_camadas_mm'][0]} contorno + {p['espessura_camadas_mm'][1]} arte)")
     if spec.get('observacao_dtf'): L += ['', f"DTF (não impresso em 3D): {spec['observacao_dtf']}"]
-    L += ['', f'ESPESSURA: {BT + AT} mm. Acabamento: ' + (rel['pecas'][0].get('acabamento', 'nivelado') if rel['pecas'] else '') + ' (nivelado = arte embutida no contorno, superfície lisa; relevo = arte 1 mm acima do contorno).', '',
+    L += ['', 'Acabamento: ' + (rel['pecas'][0].get('acabamento', 'nivelado') if rel['pecas'] else '') + ' (nivelado = arte embutida no contorno, superfície lisa; relevo = arte 1 mm acima do contorno).', '',
           'ARQUIVOS POR PEÇA', f'- *_1_BASE_contorno_{cor_base}.stl -> filamento do contorno',
           '- *_2_ARTE_<cor>.stl (e _3_, _4_ se houver mais cores) -> filamento de cada cor da arte',
           '- *_peca_unica_1cor.stl -> mesma peça em um corpo só (1 cor / pintura)', '',
