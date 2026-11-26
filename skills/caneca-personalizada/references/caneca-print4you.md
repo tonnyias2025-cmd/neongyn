@@ -17,6 +17,8 @@ parecer diferente.
 
 Partes negativas: obj 3 (base) parte 2 = rebaixo do aro (manter); obj 6 parte 5 = texto "SANTOS FUTEBOL CLUBE" recortado no anel (remover para anel liso).
 Filamentos no modelo: base = filamento 2; corpos = filamento 1.
+Anel da base (obj 6): liso de 0 a ~17 mm (onde ia o texto); faixa texturizada em losangos de 17,3 a 24,3 mm; acima disso a luva.
+Montagem (para mockup): obj 6 em pé; obj 8 invertido com a base a +32 mm (a alça do obj 6 atravessa o encaixe do obj 8 e termina rente ao topo, 123,5 mm); obj 3 (aro) por cima, de 123,5 a 140,7 mm.
 
 Alça em +Y no arquivo. Frente da caneca = lado oposto à alça (-Y). Laterais = ±X.
 

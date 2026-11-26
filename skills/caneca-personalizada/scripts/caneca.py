@@ -706,7 +706,7 @@ def _caneca_base(path3mf, cn):
         data = rx_obj.sub(lambda m: m.group(0) if m.group(1).decode() in ids else b'', data)
         arquivos[f] = data
     # model_settings dos objetos mantidos
-    ms_objs = []
+    ms_map = {}
     for o in ms.findall('object'):
         k = o.get('id')
         if k not in keep: continue
@@ -714,11 +714,67 @@ def _caneca_base(path3mf, cn):
             if p.get('id') in remover.get(k, []): o.remove(p)
         nm = o.find("metadata[@key='name']")
         if nm is not None: nm.set('value', keep[k])
-        ms_objs.append(etree.tostring(o).decode())
+        ms_map[k] = etree.tostring(o).decode()
+    ms_objs = [ms_map[k] for k in ordem]  # mesma ordem de root_objs
     ids = [int(o.get('id')) for o in res.findall(NS + 'object')]
     for f in z.namelist():
         if f.startswith('3D/Objects/'):
             ids += [int(x) for x in re.findall(rb'<object\b[^>]*\bid="(\d+)"', z.read(f))]
+    # 'pintar': separa uma faixa de altura de um objeto da caneca numa parte própria com outro filamento
+    import uuid, manifold3d as mf
+    prox = max(ids) + 1
+    for regra in cn.get('pintar', []):
+        k = str(regra['objeto']); i_obj = ordem.index(k)
+        o_el = etree.fromstring(root_objs[i_obj]); comps = o_el.find(NS + 'components')
+        ms_el = etree.fromstring(ms_objs[i_obj])
+        neg_ids = {p.get('id') for p in ms_el.findall('part') if p.get('subtype') != 'normal_part'}
+        novos_sub = []; novos_comps = []; novas_partes = []
+        for c in list(comps):
+            cid = c.get('objectid')
+            if cid in neg_ids: continue
+            src = c.get(PN + 'path').lstrip('/')
+            m = re.search(rb'<object\b[^>]*\bid="' + cid.encode() + rb'"[^>]*>(.*?)</object>', z.read(src), re.S).group(1)
+            V = np.array(re.findall(rb'<vertex\s+x="([^"]+)"\s+y="([^"]+)"\s+z="([^"]+)"', m), dtype=float)
+            Fc = np.array(re.findall(rb'<triangle\s+v1="(\d+)"\s+v2="(\d+)"\s+v3="(\d+)"', m), dtype=np.int64)
+            V = (np.c_[V, np.ones(len(V))] @ _T(c.get('transform', '1 0 0 0 1 0 0 0 1 0 0 0')))[:, :3]
+            M = mf.Manifold(mf.Mesh(np.asarray(V, np.float32), np.asarray(Fc, np.uint32)))
+            # 'z' é medido de baixo da peça já posicionada na mesa (mm reais); converte para o sistema local do objeto
+            TB = _T(builds[i_obj][1]); Wz = (np.c_[V, np.ones(len(V))] @ TB)[:, 2]; sz = TB[2, 2]
+            z0, z1 = [(Wz.min() + zz - TB[3, 2]) / sz for zz in regra['z']]
+            R = float(np.abs(V[:, :2] - V[:, :2].mean(0)).max() * 2 + 50)
+            cx, cy = (V[:, :2].max(0) + V[:, :2].min(0)) / 2
+            slab = mf.Manifold.cube((2 * R, 2 * R, z1 - z0)).translate((cx - R, cy - R, z0))
+            for nome_p, G, fil in [(regra.get('nome', 'faixa'), M ^ slab, regra['filamento']), ('resto', M - slab, None)]:
+                mm = G.to_mesh(); Vn = np.asarray(mm.vert_properties)[:, :3]; Fn = np.asarray(mm.tri_verts)
+                if len(Fn) == 0: continue
+                pid = prox; prox += 1
+                vx = ''.join(f'<vertex x="{a:.5f}" y="{b:.5f}" z="{q:.5f}"/>' for a, b, q in Vn)
+                tx = ''.join(f'<triangle v1="{a}" v2="{b}" v3="{q}"/>' for a, b, q in Fn)
+                novos_sub.append(f'<object id="{pid}" p:UUID="{uuid.uuid4()}" type="model"><mesh><vertices>{vx}</vertices><triangles>{tx}</triangles></mesh></object>')
+                novos_comps.append((cid, pid))
+                ext = f'<metadata key="extruder" value="{fil}"/>' if fil else ''
+                novas_partes.append(f'<part id="{pid}" subtype="normal_part"><metadata key="name" value="{keep[k]} - {nome_p}"/>'
+                                    f'<metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>{ext}'
+                                    f'<mesh_stat face_count="{len(Fn)}" edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/></part>')
+        fname = f'3D/Objects/object_pintura_{k}.model'
+        arquivos[fname] = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" '
+            'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
+            'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">\n'
+            '<metadata name="BambuStudio:3mfVersion">1</metadata>\n<resources>' + ''.join(novos_sub) + '</resources>\n<build/>\n</model>\n').encode()
+        trocados = {cid for cid, _ in novos_comps}
+        for c in list(comps):
+            if c.get('objectid') in trocados: comps.remove(c)
+        for _, pid in novos_comps:
+            e = etree.SubElement(comps, NS + 'component'); e.set(PN + 'path', '/' + fname); e.set('objectid', str(pid))
+            e.set(PN + 'UUID', str(uuid.uuid4())); e.set('transform', '1 0 0 0 1 0 0 0 1 0 0 0')
+        for p in ms_el.findall('part'):
+            if p.get('id') in trocados: ms_el.remove(p)
+        txt = etree.tostring(ms_el).decode(); txt = txt.replace('</object>', ''.join(novas_partes) + '</object>')
+        root_objs[i_obj] = etree.tostring(o_el).decode(); ms_objs[i_obj] = txt
+        ids.append(prox)
+    # remove arquivos de malha que ficaram sem uso
+    usados_final = set(re.findall(r'p:path="/([^"]+)"', ''.join(root_objs)))
+    arquivos = {f: d for f, d in arquivos.items() if f in usados_final}
     meta = [etree.tostring(m).decode() for m in root.findall(NS + 'metadata') if m.get('name') not in ('Title', 'Thumbnail_Middle', 'Thumbnail_Small', 'DesignerCover', 'ProfileCover')]
     return {'nplacas': len(ordem), 'root_objs': root_objs, 'builds': builds, 'arquivos': arquivos, 'ms_objs': ms_objs,
             'max_id': max(ids), 'old_cols': old_cols, 'bw': bw, 'bd': bd, 'meta': meta, 'nomes': [keep[k] for k in ordem],

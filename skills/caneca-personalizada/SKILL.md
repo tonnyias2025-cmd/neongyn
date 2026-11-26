@@ -79,6 +79,9 @@ Campos úteis:
 - `caneca` (opcional): inclui as peças da caneca no MESMO projeto 3MF, antes das placas do cliente. Ex. (Santos):
   `{"modelo_3mf": "...3mf", "objetos": {"3": "CANECA - BASE", "6": "CANECA - CORPO INFERIOR + ALCA (anel liso)", "8": "CANECA - CORPO SUPERIOR"}, "remover_partes": {"6": ["5"]}}`.
   Use o `analisar` para achar os ids (corpos/base) e as partes negativas de texto do time no anel (remova-as para o anel sair liso).
+  `pintar` (opcional): separa uma faixa de altura de um objeto da caneca numa parte com outro filamento, sem mudar a
+  geometria. Ex. faixa texturizada do anel da base do Santos em amarelo: `"pintar": [{"objeto": "6", "z": [17.3, 24.3], "filamento": 2, "nome": "faixa texturizada do anel"}]`
+  (`z` em mm medidos de baixo da peça como ela fica na mesa).
   Não inclua placas que são do time (escudos, textos, versão "letras juntas"). As cores do corpo seguem o filamento
   que cada objeto usa no modelo (Santos: base = filamento 2, corpos = filamento 1) – diga ao Tonny qual cor cada peça vai ter.
 - `mockup.cor_corpo` (ex.: `"#1c1c1c"` para caneca preta): cor do corpo no mockup – sem isso fica branco e um contorno branco some.
