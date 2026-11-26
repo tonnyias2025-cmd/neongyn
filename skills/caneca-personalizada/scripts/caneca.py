@@ -340,16 +340,43 @@ def _widen_gaps(g, mingap):
     if not vaos: return g
     return clean_geom(g.difference(unary_union(vaos).buffer(0.15)))
 
+def _alisar_anel(coords, sigma=0.25, passo=0.05, janela=1.0, canto_graus=40, protege=0.25):
+    """Alisa degraus/serrilhados pequenos do contorno preservando cantos reais.
+    Canto real = giro acumulado grande numa janela de ±janela mm; degrau = dois giros opostos que se anulam."""
+    P = np.asarray(coords)[:-1]
+    if len(P) < 4: return coords
+    seg = np.diff(np.vstack([P, P[:1]]), axis=0); L = np.hypot(seg[:, 0], seg[:, 1]); per = L.sum()
+    if per < 1: return coords
+    n = max(16, int(per / passo)); t = np.linspace(0, per, n, endpoint=False)
+    cum = np.concatenate([[0], np.cumsum(L)])
+    Q = np.c_[np.interp(t, cum, np.r_[P[:, 0], P[0, 0]]), np.interp(t, cum, np.r_[P[:, 1], P[0, 1]])]
+    d = np.roll(Q, -1, 0) - Q; ang = np.unwrap(np.arctan2(d[:, 1], d[:, 0]))
+    turn = np.diff(np.r_[ang, ang[0] + (ang[-1] - ang[0]) + (np.arctan2(*(d[0][::-1])) - np.arctan2(*(d[-1][::-1])))])
+    turn = (turn + np.pi) % (2 * np.pi) - np.pi
+    w = max(1, int(janela / passo)); k = np.ones(2 * w + 1)
+    net = np.convolve(np.r_[turn[-w:], turn, turn[:w]], k, 'valid')
+    canto = np.abs(np.degrees(net)) > canto_graus
+    # canto real = pico local do giro acumulado acima do limite; protege só a vizinhança imediata
+    pico = canto & (np.abs(net) >= np.maximum(np.abs(np.roll(net, 1)), np.abs(np.roll(net, -1))))
+    wp = max(1, int(protege / passo)); kp = np.ones(2 * wp + 1)
+    canto = np.convolve(np.r_[pico[-wp:], pico, pico[:wp]].astype(float), kp, 'valid') > 0
+    sg = sigma / passo; m = int(3 * sg); x = np.arange(-m, m + 1); G = np.exp(-0.5 * (x / sg) ** 2); G /= G.sum()
+    S = np.c_[np.convolve(np.r_[Q[-m:, 0], Q[:, 0], Q[:m, 0]], G, 'valid'), np.convolve(np.r_[Q[-m:, 1], Q[:, 1], Q[:m, 1]], G, 'valid')]
+    R = np.where(canto[:, None], Q, S)
+    return np.vstack([R, R[:1]])
+
 def _suavizar(g, r):
-    """Remove dentes/serrilhados do vetor menores que ~2r, ilha por ilha (não junta partes separadas)."""
+    """Remove dentes, degraus e serrilhados do vetor (< ~2r) ilha por ilha, mantendo cantos reais das letras."""
     if r <= 0: return g
-    _, _, _, unary_union, _ = _shp()
+    Polygon, _, _, unary_union, _ = _shp()
     out = []
     for p in parts(g):
         q = p.buffer(r, join_style=1).buffer(-r, join_style=1)      # fecha entalhes pequenos
         q = q.buffer(-r, join_style=1).buffer(r, join_style=1)      # tira pontas/rebarbas pequenas
-        q = q.intersection(p.buffer(r))                              # não cresce além do original
-        if not q.is_empty: out.append(q)
+        for qq in parts(q.intersection(p.buffer(r))):
+            ext = _alisar_anel(qq.exterior.coords, sigma=max(r, 0.15) * 1.6)
+            holes = [_alisar_anel(h.coords, sigma=max(r, 0.15) * 1.6) for h in qq.interiors]
+            out.append(Polygon(ext, holes).buffer(0))
     return clean_geom(unary_union(out))
 
 def _backing(g, borda, fechar):
