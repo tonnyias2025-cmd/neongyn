@@ -382,7 +382,7 @@ def cmd_gerar(a):
     R = spec.get('raio_caneca', 49.0)
     cor_base = spec.get('cor_contorno', 'preto')
     cliente = spec.get('cliente', 'CLIENTE').upper().replace(' ', '_')
-    relatorio = {'cliente': cliente, 'pecas': []}; built = []
+    relatorio = {'cliente': cliente, 'pecas': []}; built = []; malhas = []
     print(f'== {cliente} ==')
     for pc in spec['pecas']:
         nome = pc['nome'].upper().replace(' ', '_')
@@ -436,6 +436,7 @@ def cmd_gerar(a):
                 'espessura_mm': BASE_T + ART_T, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
                 'flecha_na_caneca_mm': round(flecha, 1)}
         relatorio['pecas'].append(info); built.append((pc, nome, back, layers))
+        malhas.append((nome, pc.get('quantidade', 1), [('contorno', mb, None)] + [(f'arte {_nome_cor(c)}', mt, c) for (c, _), mt in zip(layers, tops)]))
         print(f"  {nome}: {BW:.1f} × {BH:.1f} mm  (arte {w * s:.1f} × {h * s:.1f})  x{info['quantidade']}  cores {[ _nome_cor(c) for c in info['cores_arte']]}")
         for x in avisos: print('     AVISO:', x)
     # prévia
@@ -459,14 +460,132 @@ def cmd_gerar(a):
         _mockup(spec, P, out, built, R, cb)
     except Exception as ex:
         print('mockup falhou:', ex)
+    # projeto Bambu Studio (.3mf): uma placa por peça, partes com filamento atribuído
+    try:
+        relatorio['projeto_3mf'] = _projeto_3mf(spec, P, out, cliente, malhas, cor_base)
+    except Exception as ex:
+        print('3MF falhou:', ex); relatorio['projeto_3mf'] = {'erro': str(ex)}
     # LEIA-ME + zip
     _leiame(spec, relatorio, out, cor_base, BASE_T, ART_T, BICO, VAO)
     json.dump(relatorio, open(os.path.join(out, 'relatorio.json'), 'w'), ensure_ascii=False, indent=1)
     zp = os.path.join(os.path.dirname(out.rstrip('/')), f'{cliente}_caneca_STL.zip')
     with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as z:
         for f in sorted(os.listdir(out)):
-            if f.endswith(('.stl', '.png', '.txt')): z.write(os.path.join(out, f), f)
+            if f.endswith(('.stl', '.png', '.txt', '.3mf')): z.write(os.path.join(out, f), f)
     print('Saída:', out); print('Zip:', zp)
+
+HEX_COR = {'preto': '#000000', 'branco': '#FFFFFF', 'cinza': '#808080', 'amarelo': '#FFCC29', 'vermelho': '#D62828',
+           'azul': '#1F4FBF', 'verde': '#2E9E44', 'laranja': '#F08A24', 'marrom': '#6B3E1F', 'rosa': '#F28CB1', 'roxo': '#7B3FA0'}
+def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
+    """Projeto Bambu Studio: cada peça numa placa (quantidade = cópias na placa), cada peça = 1 objeto com partes
+    (contorno + arte por cor) e filamento atribuído. Configurações de impressora/filamento copiadas do 3MF Print4You."""
+    import uuid
+    tpl = spec.get('projeto_modelo_3mf') or spec.get('mockup', {}).get('modelo_3mf')
+    proj = None; fil_cfgs = {}
+    if tpl and os.path.exists(P(tpl)):
+        zt = zipfile.ZipFile(P(tpl))
+        if 'Metadata/project_settings.config' in zt.namelist():
+            proj = json.loads(zt.read('Metadata/project_settings.config'))
+            for n in zt.namelist():
+                if n.startswith('Metadata/filament_settings_'): fil_cfgs[n] = zt.read(n)
+    # filamentos: 1 = contorno, 2.. = cores da arte (na ordem em que aparecem)
+    hb = cor_base if cor_base.startswith('#') else HEX_COR.get(cor_base, '#000000')
+    cores = [hb.upper()]
+    for _, _, partes in malhas:
+        for _, _, c in partes:
+            if c and c.upper() not in cores: cores.append(c.upper())
+    n_tpl = len(proj['filament_colour']) if proj else len(cores)
+    avisos = []
+    if len(cores) > n_tpl:
+        avisos.append(f'O projeto modelo tem {n_tpl} filamentos e as peças usam {len(cores)} cores: as cores extras ficaram '
+                      f'no filamento {n_tpl}. No Bambu Studio, adicione filamento (+) e troque o filamento dessas partes.')
+    fil_of = {c: min(i + 1, n_tpl) for i, c in enumerate(cores)}
+    if proj:
+        fc = list(proj['filament_colour'])
+        for c, i in fil_of.items(): fc[i - 1] = c
+        proj['filament_colour'] = fc
+    # geometria das placas (grade igual ao Bambu Studio: colunas = teto(raiz(n)), passo = mesa x 1,2)
+    if proj:
+        pa = [tuple(float(v) for v in p.split('x')) for p in proj['printable_area']]
+        bw = max(p[0] for p in pa) - min(p[0] for p in pa); bd = max(p[1] for p in pa) - min(p[1] for p in pa)
+    else:
+        bw = bd = 256.0
+    nplates = len(malhas); v = math.sqrt(nplates); cols = int(round(v)) + (1 if v > round(v) else 0)
+    model_files = {}; root_objs = []; build = []; ms_objs = []; plates = []
+    oid = 1; ident = 1000
+    for pi, (nome, qtd, partes) in enumerate(malhas):
+        col, row = pi % cols, pi // cols
+        ox, oy = col * bw * 1.2, -row * bd * 1.2
+        allv = np.vstack([m.vertices for _, m, _ in partes]); x0, y0 = allv[:, :2].min(0); x1, y1 = allv[:, :2].max(0)
+        wpc, hpc = x1 - x0, y1 - y0; gap = 8.0
+        porlinha = max(1, int((bw - 20) // (wpc + gap)))
+        inst = []
+        for k in range(qtd):
+            r_, c_ = divmod(k, porlinha); inst.append((c_, r_))
+        ncol = min(qtd, porlinha); nrow = (qtd - 1) // porlinha + 1
+        model_ids = []
+        for k, (c_, r_) in enumerate(inst):
+            fname = f'3D/Objects/object_{oid}.model'
+            sub = []; comps = []; ms_parts = []
+            for j, (pn, m, c) in enumerate(partes):
+                vid = oid * 100 + j + 1
+                V = m.vertices - [(x0 + x1) / 2, (y0 + y1) / 2, 0]
+                vx = ''.join(f'<vertex x="{a:.5f}" y="{b:.5f}" z="{c2:.5f}"/>' for a, b, c2 in V)
+                tx = ''.join(f'<triangle v1="{a}" v2="{b}" v3="{c2}"/>' for a, b, c2 in m.faces)
+                sub.append(f'<object id="{vid}" p:UUID="{uuid.uuid4()}" type="model"><mesh><vertices>{vx}</vertices>'
+                           f'<triangles>{tx}</triangles></mesh></object>')
+                comps.append(f'<component p:path="/{fname}" objectid="{vid}" p:UUID="{uuid.uuid4()}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>')
+                fil = 1 if c is None else fil_of[c.upper()]
+                ms_parts.append(f'<part id="{vid}" subtype="normal_part"><metadata key="name" value="{nome} - {pn}"/>'
+                                f'<metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>'
+                                f'<metadata key="extruder" value="{fil}"/><mesh_stat face_count="{len(m.faces)}" edges_fixed="0" '
+                                f'degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/></part>')
+            model_files[fname] = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" '
+                'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
+                'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">\n'
+                '<metadata name="BambuStudio:3mfVersion">1</metadata>\n<resources>' + ''.join(sub) + '</resources>\n<build/>\n</model>\n')
+            obj_name = nome if qtd == 1 else f'{nome} {k + 1}'
+            root_objs.append(f'<object id="{oid}" p:UUID="{uuid.uuid4()}" type="model" name="{obj_name}"><components>{"".join(comps)}</components></object>')
+            cx = ox + bw / 2 + (c_ - (ncol - 1) / 2) * (wpc + gap); cy = oy + bd / 2 - (r_ - (nrow - 1) / 2) * (hpc + gap)
+            build.append(f'<item objectid="{oid}" p:UUID="{uuid.uuid4()}" transform="1 0 0 0 1 0 0 0 1 {cx:.4f} {cy:.4f} 0" printable="1"/>')
+            ms_objs.append(f'<object id="{oid}"><metadata key="name" value="{obj_name}"/><metadata key="extruder" value="1"/>'
+                           f'<metadata face_count="{sum(len(m.faces) for _, m, _ in partes)}"/>{"".join(ms_parts)}</object>')
+            ident += 1; model_ids.append((oid, ident)); oid += 1
+        insts = ''.join(f'<model_instance><metadata key="object_id" value="{o}"/><metadata key="instance_id" value="0"/>'
+                        f'<metadata key="identify_id" value="{i}"/></model_instance>' for o, i in model_ids)
+        plates.append(f'<plate><metadata key="plater_id" value="{pi + 1}"/><metadata key="plater_name" value="{cliente} - {nome} (x{qtd})"/>'
+                      f'<metadata key="locked" value="false"/>{insts}</plate>')
+    root = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" '
+            'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
+            'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">\n'
+            f'<metadata name="Application">BambuStudio-{(proj or {}).get("version", "02.08.02.61")}</metadata>\n'
+            '<metadata name="BambuStudio:3mfVersion">1</metadata>\n'
+            f'<metadata name="Title">{cliente} - pecas caneca</metadata>\n'
+            '<resources>' + ''.join(root_objs) + '</resources>\n<build>' + ''.join(build) + '</build>\n</model>\n')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            ''.join(f'<Relationship Target="/{f}" Id="rel-{i + 1}" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>'
+                    for i, f in enumerate(model_files)) + '</Relationships>\n')
+    ms = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + ''.join(ms_objs) + ''.join(plates) + '\n</config>\n'
+    fn = os.path.join(out, f'PROJETO_{cliente}_caneca.3mf')
+    with zipfile.ZipFile(fn, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
+                   '<Default Extension="png" ContentType="image/png"/><Default Extension="gcode" ContentType="text/x.gcode"/></Types>\n')
+        z.writestr('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>\n')
+        z.writestr('3D/3dmodel.model', root)
+        z.writestr('3D/_rels/3dmodel.model.rels', rels)
+        for f, txt in model_files.items(): z.writestr(f, txt)
+        z.writestr('Metadata/model_settings.config', ms)
+        if proj:
+            z.writestr('Metadata/project_settings.config', json.dumps(proj, indent=4, ensure_ascii=False))
+            for n, b in fil_cfgs.items(): z.writestr(n, b)
+    if not proj: avisos.append('Sem 3MF modelo da Print4You: o projeto saiu sem configurações de impressora/filamento.')
+    for a in avisos: print('  AVISO 3MF:', a)
+    mapa = {f'filamento {i}': c for c, i in fil_of.items()}
+    print(f'  Projeto 3MF: {fn}  ({nplates} placas, filamentos {mapa})')
+    return {'arquivo': os.path.basename(fn), 'placas': nplates, 'filamentos': mapa, 'avisos': avisos}
 
 POS = {'frente': (0, 0.72), 'lateral_esq': (-90, 0.57), 'lateral_dir': (90, 0.57), 'tras': (180, 0.6)}
 def _mockup(spec, P, out, built, R, cb):
@@ -531,13 +650,19 @@ def _leiame(spec, rel, out, cor_base, BT, AT, BICO, VAO):
           'ARQUIVOS POR PEÇA', f'- *_1_BASE_contorno_{cor_base}.stl -> filamento do contorno',
           '- *_2_ARTE_<cor>.stl (e _3_, _4_ se houver mais cores) -> filamento de cada cor da arte',
           '- *_peca_unica_1cor.stl -> mesma peça em um corpo só (1 cor / pintura)', '',
-          'BAMBU STUDIO (multicor)', '1. Selecione juntos os arquivos _1_BASE e _N_ARTE da mesma peça e importe.',
+          'PROJETO BAMBU STUDIO (recomendado): PROJETO_<cliente>_caneca.3mf',
+          '- Abra pelo Bambu Studio (Arquivo > Abrir projeto). Cada peça está numa placa, já com as cópias necessárias.',
+          '- Cada peça é um objeto com partes: contorno (filamento 1) e arte (filamento 2, 3...).',
+          '- Para mudar a cor: troque a cor do filamento na lista "Filamentos do Projeto", ou o filamento da parte na lista de objetos.',
+          '- O projeto vem com o perfil de impressora do modelo Print4You; se a sua impressora for outra, selecione-a e confirme.', '',
+          'STLs SOLTOS (alternativa)', '1. Selecione juntos os arquivos _1_BASE e _N_ARTE da mesma peça e importe.',
           '2. Responda "Sim" para carregar como UM objeto com várias partes (já estão alinhadas).',
-          '3. Atribua o filamento de cada parte. Imprima a quantidade indicada de cada peça.', '',
+          '3. Atribua o filamento de cada parte. Abrir só um STL mostra só aquela camada.', '',
           'PONTOS DE ATENÇÃO', '- Peças planas: moldar na caneca com soprador, como os emblemas originais.',
           f'- Vãos da arte alargados para no mínimo {VAO} mm (bico {BICO}).']
     for p in rel['pecas']:
         for x in p['avisos']: L.append(f"- {p['nome']}: {x}")
+    for x in rel.get('projeto_3mf', {}).get('avisos', []): L.append(f'- 3MF: {x}')
     open(os.path.join(out, 'LEIA-ME.txt'), 'w').write('\n'.join(L) + '\n')
 
 def main():

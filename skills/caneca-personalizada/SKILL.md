@@ -88,6 +88,12 @@ de altura); frente: nome com 55–65 mm de largura. Acima de ~60 mm de largura a
 **Cor do contorno:** escolha pelo contraste com a arte E com o corpo da caneca (amarelo em caneca branca → contorno
 preto). Diga ao Tonny o porquê; trocar é só mudar o filamento, o arquivo é o mesmo.
 
+Saídas: STLs por camada, `PROJETO_<CLIENTE>_caneca.3mf` (projeto Bambu Studio: uma placa por peça, cópias já
+na placa, cada peça com partes contorno/arte e filamento atribuído, cores do filamento já no projeto), prévia, mockup,
+LEIA-ME e zip. O 3MF é o arquivo principal para o Tonny – é o mesmo formato dos modelos Print4You. Ele copia o perfil de
+impressora/filamento do 3MF modelo (`projeto_modelo_3mf` ou `mockup.modelo_3mf`); sem modelo, sai sem perfil.
+Se a arte tiver mais cores do que filamentos no modelo, o script avisa – oriente a adicionar filamento no Bambu.
+
 ## 5. Conferir antes de entregar
 - Abra `PREVIEW_pecas.png` (vermelho = traço mais fino que o bico) e `MOCKUP_caneca.png`. Se algo estiver
   fora (peça no lugar errado, elemento faltando, logo cortado), corrija o pedido e gere de novo.
@@ -95,7 +101,7 @@ preto). Diga ao Tonny o porquê; trocar é só mudar o filamento, o arquivo é o
   peça passando a referência.
 
 ## 6. Entregar ao Tonny
-- Envie o `MOCKUP_caneca.png`, o `PREVIEW_pecas.png` e o zip (`<CLIENTE>_caneca_STL.zip`) com SendUserFile.
+- Envie o `PROJETO_<CLIENTE>_caneca.3mf`, o `MOCKUP_caneca.png`, o `PREVIEW_pecas.png` e o zip (`<CLIENTE>_caneca_STL.zip`) com SendUserFile.
 - Resposta curta, em português, direta: tabela de peças (nome, tamanho, quantidade), decisões tomadas e por quê
   (tamanho, cor do contorno, vãos alargados), riscos (traço fino, curvatura) e o próximo passo (teste físico).
 - Não coloque logo nem STL de cliente em repositório git (o repo do site é público).
