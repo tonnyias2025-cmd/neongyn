@@ -75,6 +75,7 @@ Campos úteis:
 - Espessura por peça (`espessura_base`/`espessura_arte`), seguindo o padrão Print4You:
   escudo/ícone = 1,0 + 1,0 mm (2 mm); **placa de texto/nome = 0,4 + 0,4 mm (0,8 mm)**, fina para dobrar e colar na curva.
   Use sempre múltiplos de 0,2 mm (altura de camada): a placa de texto Print4You tem 0,87 mm no arquivo, mas imprime 0,8 mm.
+- `espelhar_par: true` (peças das laterais com `quantidade: 2`): gera um normal (lado direito, vendo a caneca de frente) e um espelhado (lado esquerdo), para os dois lados ficarem simétricos em relação à alça. Use sempre que a mesma arte for nas duas laterais e ela tiver direção (não simétrica).
 - `acabamento`: `nivelado` (padrão – arte embutida no contorno, superfície lisa, igual aos escudos Print4You) ou `relevo` (arte 1 mm acima do contorno). Pode ir por peça ou global.
 - `suavizar` (padrão 0,15 mm): tira dentes e serrilhados do vetor original (comuns em logos vetorizados no Corel) sem deformar a letra. Use 0 para manter o vetor exato; até 0,3 para logos muito serrilhados (arredonda pontas finas).
 - Opcionais globais: `borda` (1,2 mm), `espessura_base`/`espessura_arte` (1,0/1,0 mm), `bico` (0,4), `vao_min` (0,5), `raio_caneca` (49), `fechar` (3,0).

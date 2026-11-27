@@ -502,7 +502,18 @@ def cmd_gerar(a):
                 'espessura_mm': round(bt + at, 2), 'espessura_camadas_mm': [bt, at], 'acabamento': acab, 'cores_arte': [c for c, _ in layers], 'arquivos': files, 'avisos': avisos,
                 'flecha_na_caneca_mm': round(flecha, 1)}
         relatorio['pecas'].append(info); built.append((pc, nome, back, layers))
-        malhas.append((nome, pc.get('quantidade', 1), [('contorno', mb, None)] + [(f'arte {_nome_cor(c)}', mt, c) for (c, _), mt in zip(layers, tops)]))
+        partes_m = [('contorno', mb, None)] + [(f'arte {_nome_cor(c)}', mt, c) for (c, _), mt in zip(layers, tops)]
+        variantes = None
+        if pc.get('espelhar_par'):
+            # par para os dois lados da caneca: um normal (lado direito, vendo de frente) e um espelhado (lado esquerdo)
+            esp = lambda m: trimesh.Trimesh(m.vertices * [-1, 1, 1], m.faces[:, ::-1], process=False)
+            partes_e = [(pn, esp(m), c) for pn, m, c in partes_m]
+            for (pn, m, c), f0 in zip(partes_e, [fb] + [f'{nome}_{i + 2}_ARTE_{_nome_cor(c)}.stl' for i, (c, _) in enumerate(layers)]):
+                fe = f0.replace(nome, nome + '_ESPELHADO', 1); m.export(os.path.join(out, fe)); files.append(fe)
+            fe = f'{nome}_ESPELHADO_peca_unica_1cor.stl'; esp(mu).export(os.path.join(out, fe)); files.append(fe)
+            variantes = [(' - lado direito', partes_m), (' ESPELHADO - lado esquerdo', partes_e)]
+            info['espelhado'] = True
+        malhas.append((nome, pc.get('quantidade', 1), partes_m, variantes))
         print(f"  {nome}: {BW:.1f} × {BH:.1f} mm  (arte {w * s:.1f} × {h * s:.1f})  x{info['quantidade']}  cores {[ _nome_cor(c) for c in info['cores_arte']]}")
         for x in avisos: print('     AVISO:', x)
     # prévia
@@ -557,7 +568,7 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
     # filamentos: 1 = contorno, 2.. = cores da arte (na ordem em que aparecem)
     hb = cor_base if cor_base.startswith('#') else HEX_COR.get(cor_base, '#000000')
     cores = [hb.upper()]
-    for _, _, partes in malhas:
+    for _, _, partes, _v in malhas:
         for _, _, c in partes:
             if c and c.upper() not in cores: cores.append(c.upper())
     n_tpl = len(proj['filament_colour']) if proj else len(cores)
@@ -585,7 +596,7 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
     nplates = n0 + len(malhas); cols = _cols(nplates)
     model_files = {}; root_objs = []; build = []; ms_objs = []; plates = []
     oid = (base['max_id'] + 1) if base else 1; ident = 5000
-    for pi0, (nome, qtd, partes) in enumerate(malhas):
+    for pi0, (nome, qtd, partes, variantes) in enumerate(malhas):
         pi = n0 + pi0
         col, row = pi % cols, pi // cols
         ox, oy = col * bw * 1.2, -row * bd * 1.2
@@ -598,6 +609,8 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
         ncol = min(qtd, porlinha); nrow = (qtd - 1) // porlinha + 1
         model_ids = []
         for k, (c_, r_) in enumerate(inst):
+            suf = ''
+            if variantes: suf, partes = variantes[k % len(variantes)]
             fname = f'3D/Objects/object_{oid}.model'
             sub = []; comps = []; ms_parts = []
             for j, (pn, m, c) in enumerate(partes):
@@ -617,7 +630,7 @@ def _projeto_3mf(spec, P, out, cliente, malhas, cor_base):
                 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
                 'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">\n'
                 '<metadata name="BambuStudio:3mfVersion">1</metadata>\n<resources>' + ''.join(sub) + '</resources>\n<build/>\n</model>\n')
-            obj_name = nome if qtd == 1 else f'{nome} {k + 1}'
+            obj_name = (nome + suf) if variantes else (nome if qtd == 1 else f'{nome} {k + 1}')
             root_objs.append(f'<object id="{oid}" p:UUID="{uuid.uuid4()}" type="model" name="{obj_name}"><components>{"".join(comps)}</components></object>')
             cx = ox + bw / 2 + (c_ - (ncol - 1) / 2) * (wpc + gap); cy = oy + bd / 2 - (r_ - (nrow - 1) / 2) * (hpc + gap)
             build.append(f'<item objectid="{oid}" p:UUID="{uuid.uuid4()}" transform="1 0 0 0 1 0 0 0 1 {cx:.4f} {cy:.4f} 0" printable="1"/>')
@@ -851,6 +864,7 @@ def _mesclar_caneca(base, cols, root_objs, build, ms_objs, plates, model_files, 
 POS = {'frente': (0, 0.72), 'lateral_esq': (-90, 0.57), 'lateral_dir': (90, 0.57), 'tras': (180, 0.6)}
 def _mockup(spec, P, out, built, R, cb):
     import trimesh
+    from shapely import affinity
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
     mk = spec.get('mockup', {})
@@ -883,8 +897,10 @@ def _mockup(spec, P, out, built, R, cb):
         for i, pos in enumerate(poss):
             ang, fr = POS.get(pos, (0, 0.6))
             hc = pc.get('altura_centro', fr * Hc)
-            items.append(wrap(back, ang, hc, 0, 1.0, cb))
-            for c, g in layers: items.append(wrap(g, ang, hc, 1.0, 1.0, c))
+            esp = pc.get('espelhar_par') and pos == 'lateral_esq'
+            E = (lambda g: affinity.scale(g, -1, 1, origin=(0, 0))) if esp else (lambda g: g)
+            items.append(wrap(E(back), ang, hc, 0, 1.0, cb))
+            for c, g in layers: items.append(wrap(E(g), ang, hc, 1.0, 1.0, c))
     Lgt = np.array([-0.4, -0.8, 0.5]); Lgt /= np.linalg.norm(Lgt)
     fig, axs = plt.subplots(1, 3, figsize=(18, 6.5))
     for ax, (yaw, t) in zip(axs, [(0, 'Frente (oposta à alça)'), (-90, 'Lateral'), (90, 'Outra lateral')]):
@@ -921,6 +937,10 @@ def _leiame(spec, rel, out, cor_base, BT, AT, BICO, VAO):
           '3. Atribua o filamento de cada parte. Abrir só um STL mostra só aquela camada.', '',
           'PONTOS DE ATENÇÃO', '- Peças planas: moldar na caneca com soprador, como os emblemas originais.',
           f'- Vãos da arte alargados para no mínimo {VAO} mm (bico {BICO}).']
+    for p in rel['pecas']:
+        if p.get('espelhado'):
+            L.append(f"- {p['nome']}: par para os dois lados – arquivo normal = lado DIREITO da caneca (vista de frente),"
+                     f" arquivo _ESPELHADO = lado ESQUERDO. No projeto 3MF os dois já estão na mesma placa, com esses nomes.")
     for p in rel['pecas']:
         for x in p['avisos']: L.append(f"- {p['nome']}: {x}")
     for x in rel.get('projeto_3mf', {}).get('avisos', []): L.append(f'- 3MF: {x}')
